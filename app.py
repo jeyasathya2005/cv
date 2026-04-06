@@ -1,9 +1,18 @@
 import streamlit as st
 import cv2
-import mediapipe as mp
 import numpy as np
 import requests
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+
+# ✅ SAFE MEDIAPIPE IMPORT FIX
+try:
+    import mediapipe as mp
+    mp_hands = mp.solutions.hands
+    mp_draw = mp.solutions.drawing_utils
+except:
+    mp = None
+    mp_hands = None
+    mp_draw = None
 
 # -------------------------------
 # 🎨 UI CONFIG
@@ -19,13 +28,7 @@ st.caption("Vision → Brain → AI Output")
 api_key = st.sidebar.text_input("Enter GROQ API Key", type="password")
 
 # -------------------------------
-# 🖐️ MEDIAPIPE SETUP
-# -------------------------------
-mp_hands = mp.solutions.hands
-mp_draw = mp.solutions.drawing_utils
-
-# -------------------------------
-# ✋ HAND → LETTER LOGIC
+# ✋ HAND DETECTION LOGIC
 # -------------------------------
 def get_fingers(hand):
     tips = [4, 8, 12, 16, 20]
@@ -47,31 +50,39 @@ def recognize_sign(f):
     return ""
 
 # -------------------------------
-# 🎥 VISION MODULE
+# 🎥 VIDEO PROCESSOR
 # -------------------------------
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
-        self.hands = mp_hands.Hands(max_num_hands=1)
         self.text = ""
+        if mp_hands:
+            self.hands = mp_hands.Hands(max_num_hands=1)
+        else:
+            self.hands = None
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        result = self.hands.process(rgb)
+        if self.hands:
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            result = self.hands.process(rgb)
 
-        if result.multi_hand_landmarks:
-            for hand in result.multi_hand_landmarks:
-                mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
+            if result.multi_hand_landmarks:
+                for hand in result.multi_hand_landmarks:
+                    mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
 
-                fingers = get_fingers(hand)
-                letter = recognize_sign(fingers)
+                    fingers = get_fingers(hand)
+                    letter = recognize_sign(fingers)
 
-                if letter:
-                    self.text += letter
+                    if letter:
+                        self.text += letter
 
-                cv2.putText(img, f"Letter: {letter}", (10,50),
-                            cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+                    cv2.putText(img, f"Letter: {letter}", (10,50),
+                                cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+
+        else:
+            cv2.putText(img, "MediaPipe Not Supported", (10,50),
+                        cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
 
         cv2.putText(img, f"Text: {self.text}", (10,100),
                     cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
@@ -79,7 +90,7 @@ class VideoProcessor(VideoProcessorBase):
         return img
 
 # -------------------------------
-# 🧠 AI MODULE (NO GROQ LIB)
+# 🧠 AI MODULE
 # -------------------------------
 def process_text_with_ai(text, api_key):
     if not api_key:
@@ -112,7 +123,7 @@ def process_text_with_ai(text, api_key):
         return f"❌ Error: {e}"
 
 # -------------------------------
-# 🌐 MAIN UI
+# 🌐 STREAMLIT UI
 # -------------------------------
 st.subheader("1️⃣ Vision: Hand Detection")
 
@@ -122,7 +133,7 @@ webrtc_ctx = webrtc_streamer(
 )
 
 # -------------------------------
-# 🧠 OUTPUT SECTION
+# 🧠 OUTPUT
 # -------------------------------
 if webrtc_ctx.video_processor:
 
