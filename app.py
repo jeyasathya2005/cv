@@ -1,34 +1,39 @@
+import streamlit as st
 import cv2
 import mediapipe as mp
+import numpy as np
 from groq import Groq
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 # -------------------------------
-# GROQ SETUP
+# 🔐 GROQ API
 # -------------------------------
-client = Groq(api_key="YOUR_API_KEY_HERE")
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 def enhance_text(text):
+    if text.strip() == "":
+        return ""
     try:
         response = client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
-                {"role": "system", "content": "Convert letters into meaningful word or sentence."},
+                {"role": "system", "content": "Convert letters into meaningful sentence."},
                 {"role": "user", "content": text}
             ]
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
     except:
         return text
 
 # -------------------------------
-# MEDIAPIPE SETUP
+# 🖐️ MEDIAPIPE SETUP (FIXED)
 # -------------------------------
+import mediapipe as mp
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1)
 mp_draw = mp.solutions.drawing_utils
 
 # -------------------------------
-# GESTURE DETECTION
+# ✋ GESTURE FUNCTIONS
 # -------------------------------
 def get_fingers(hand):
     tips = [4, 8, 12, 16, 20]
@@ -36,57 +41,64 @@ def get_fingers(hand):
 
     for i, tip in enumerate(tips):
         if i == 0:
-            fingers.append(hand.landmark[tip].x <
-                           hand.landmark[tip - 1].x)
+            fingers.append(hand.landmark[tip].x < hand.landmark[tip - 1].x)
         else:
-            fingers.append(hand.landmark[tip].y <
-                           hand.landmark[tip - 2].y)
+            fingers.append(hand.landmark[tip].y < hand.landmark[tip - 2].y)
+
     return fingers
 
 def recognize(f):
     if f == [0,0,0,0,0]: return "A"
-    if f == [0,1,1,1,1]: return "B"
-    if f == [1,1,0,0,0]: return "L"
-    if f == [1,1,1,0,0]: return "W"
+    elif f == [0,1,1,1,1]: return "B"
+    elif f == [1,1,0,0,0]: return "L"
+    elif f == [1,1,1,0,0]: return "W"
     return ""
 
 # -------------------------------
-# MAIN
+# 🎥 VIDEO PROCESSOR
 # -------------------------------
-cap = cv2.VideoCapture(0)
-sentence = ""
+class VideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.hands = mp_hands.Hands(max_num_hands=1)
+        self.text = ""
+        self.ai_text = ""
 
-while True:
-    _, img = cap.read()
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    res = hands.process(rgb)
+        result = self.hands.process(rgb)
 
-    if res.multi_hand_landmarks:
-        for hand in res.multi_hand_landmarks:
-            mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
+        if result.multi_hand_landmarks:
+            for hand in result.multi_hand_landmarks:
+                mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
 
-            fingers = get_fingers(hand)
-            letter = recognize(fingers)
+                fingers = get_fingers(hand)
+                letter = recognize(fingers)
 
-            if letter:
-                sentence += letter
+                if letter:
+                    self.text += letter
 
-            cv2.putText(img, f"Letter: {letter}", (10,50),
-                        cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+                cv2.putText(img, f"{letter}", (10,50),
+                            cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
 
-    # Press SPACE to send to GROQ
-    key = cv2.waitKey(1)
+        cv2.putText(img, f"Text: {self.text}", (10,100),
+                    cv2.FONT_HERSHEY_SIMPLEX,1,(255,0,0),2)
 
-    if key == 32:  # SPACE
-        output = enhance_text(sentence)
-        print("AI Output:", output)
-        sentence = ""
+        return img
 
-    if key == 27:
-        break
+# -------------------------------
+# 🌐 STREAMLIT UI
+# -------------------------------
+st.title("🖐️ Real-Time Sign Language Detection")
 
-    cv2.imshow("Sign Detection", img)
+webrtc_ctx = webrtc_streamer(
+    key="sign-lang",
+    video_processor_factory=VideoProcessor
+)
 
-cap.release()
-cv2.destroyAllWindows()
+if webrtc_ctx.video_processor:
+    if st.button("✨ Convert to Sentence"):
+        text = webrtc_ctx.video_processor.text
+        output = enhance_text(text)
+        st.success(output)
