@@ -1,71 +1,92 @@
-import streamlit as st
 import cv2
-import numpy as np
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-
-st.title("🖐️ Sign Language Detection (Cloud Compatible)")
-st.write("Basic gesture detection without MediaPipe")
+import mediapipe as mp
+from groq import Groq
 
 # -------------------------------
-# Simple Gesture Detection (Contour Based)
+# GROQ SETUP
 # -------------------------------
-def detect_hand_gesture(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (35, 35), 0)
+client = Groq(api_key="YOUR_API_KEY_HERE")
 
-    _, thresh = cv2.threshold(blur, 70, 255, cv2.THRESH_BINARY_INV)
-
-    contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    if len(contours) == 0:
-        return frame, "No Hand"
-
-    cnt = max(contours, key=cv2.contourArea)
-
-    hull = cv2.convexHull(cnt)
-
-    cv2.drawContours(frame, [cnt], -1, (0, 255, 0), 2)
-    cv2.drawContours(frame, [hull], -1, (0, 0, 255), 2)
-
-    # Simple heuristic
-    area = cv2.contourArea(cnt)
-
-    if area < 2000:
-        gesture = "Far Hand"
-    elif area < 5000:
-        gesture = "A"
-    elif area < 10000:
-        gesture = "B"
-    else:
-        gesture = "Open Hand"
-
-    return frame, gesture
-
+def enhance_text(text):
+    try:
+        response = client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[
+                {"role": "system", "content": "Convert letters into meaningful word or sentence."},
+                {"role": "user", "content": text}
+            ]
+        )
+        return response.choices[0].message.content
+    except:
+        return text
 
 # -------------------------------
-# WebRTC Video Class
+# MEDIAPIPE SETUP
 # -------------------------------
-class GestureDetector(VideoTransformerBase):
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-
-        processed, gesture = detect_hand_gesture(img)
-
-        cv2.putText(processed, f"Gesture: {gesture}",
-                    (20, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 0, 0),
-                    2)
-
-        return processed
-
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1)
+mp_draw = mp.solutions.drawing_utils
 
 # -------------------------------
-# Start Camera
+# GESTURE DETECTION
 # -------------------------------
-webrtc_streamer(
-    key="gesture-detection",
-    video_transformer_factory=GestureDetector,
-    media_stream_constraints={"video": True, "audio": False},
-)
+def get_fingers(hand):
+    tips = [4, 8, 12, 16, 20]
+    fingers = []
+
+    for i, tip in enumerate(tips):
+        if i == 0:
+            fingers.append(hand.landmark[tip].x <
+                           hand.landmark[tip - 1].x)
+        else:
+            fingers.append(hand.landmark[tip].y <
+                           hand.landmark[tip - 2].y)
+    return fingers
+
+def recognize(f):
+    if f == [0,0,0,0,0]: return "A"
+    if f == [0,1,1,1,1]: return "B"
+    if f == [1,1,0,0,0]: return "L"
+    if f == [1,1,1,0,0]: return "W"
+    return ""
+
+# -------------------------------
+# MAIN
+# -------------------------------
+cap = cv2.VideoCapture(0)
+sentence = ""
+
+while True:
+    _, img = cap.read()
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    res = hands.process(rgb)
+
+    if res.multi_hand_landmarks:
+        for hand in res.multi_hand_landmarks:
+            mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
+
+            fingers = get_fingers(hand)
+            letter = recognize(fingers)
+
+            if letter:
+                sentence += letter
+
+            cv2.putText(img, f"Letter: {letter}", (10,50),
+                        cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+
+    # Press SPACE to send to GROQ
+    key = cv2.waitKey(1)
+
+    if key == 32:  # SPACE
+        output = enhance_text(sentence)
+        print("AI Output:", output)
+        sentence = ""
+
+    if key == 27:
+        break
+
+    cv2.imshow("Sign Detection", img)
+
+cap.release()
+cv2.destroyAllWindows()
