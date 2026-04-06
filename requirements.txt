@@ -2,5 +2,5 @@ streamlit==1.32.0
 opencv-python-headless==4.8.0.76
 mediapipe==0.10.33
 streamlit-webrtc==0.47.1
-groq==0.9.0
 numpy
+requests
