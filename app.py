@@ -1,8 +1,23 @@
 import streamlit as st
 import cv2
 import mediapipe as mp
-from groq import Groq
+import numpy as np
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+from groq import Groq
+import os
+
+# -------------------------------
+# 🎨 UI CONFIG
+# -------------------------------
+st.set_page_config(page_title="SignSpeak CV", layout="wide")
+
+st.title("🖐️ Real-Time Sign Language Detection")
+st.caption("Vision → Brain → AI Output")
+
+# -------------------------------
+# 🔑 API KEY INPUT
+# -------------------------------
+api_key = st.sidebar.text_input("Enter GROQ API Key", type="password")
 
 # -------------------------------
 # 🖐️ MEDIAPIPE SETUP
@@ -11,7 +26,7 @@ mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 
 # -------------------------------
-# ✋ GESTURE FUNCTIONS
+# ✋ HAND → LETTER MODULE
 # -------------------------------
 def get_fingers(hand):
     tips = [4, 8, 12, 16, 20]
@@ -25,7 +40,7 @@ def get_fingers(hand):
 
     return fingers
 
-def recognize(f):
+def recognize_sign(f):
     if f == [0,0,0,0,0]: return "A"
     elif f == [0,1,1,1,1]: return "B"
     elif f == [1,1,0,0,0]: return "L"
@@ -33,7 +48,7 @@ def recognize(f):
     return ""
 
 # -------------------------------
-# 🎥 VIDEO PROCESSOR
+# 🎥 VISION MODULE (HAND TRACKING)
 # -------------------------------
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
@@ -51,7 +66,7 @@ class VideoProcessor(VideoProcessorBase):
                 mp_draw.draw_landmarks(img, hand, mp_hands.HAND_CONNECTIONS)
 
                 fingers = get_fingers(hand)
-                letter = recognize(fingers)
+                letter = recognize_sign(fingers)
 
                 if letter:
                     self.text += letter
@@ -65,25 +80,13 @@ class VideoProcessor(VideoProcessorBase):
         return img
 
 # -------------------------------
-# 🌐 STREAMLIT UI
+# 🧠 BRAIN MODULE (GROQ AI)
 # -------------------------------
-st.title("🖐️ Sign Language Detection + AI")
-
-# 🔑 Manual API Key Input
-api_key = st.text_input("Enter your GROQ API Key:", type="password")
-
-# Start webcam
-webrtc_ctx = webrtc_streamer(
-    key="sign-lang",
-    video_processor_factory=VideoProcessor
-)
-
-# -------------------------------
-# 🤖 AI FUNCTION
-# -------------------------------
-def enhance_text(text, api_key):
-    if not api_key or text.strip() == "":
-        return "Enter API key and show gestures"
+def process_text_with_ai(text, api_key):
+    if not api_key:
+        return "Enter API key"
+    if text.strip() == "":
+        return "No gesture detected"
 
     try:
         client = Groq(api_key=api_key)
@@ -91,7 +94,7 @@ def enhance_text(text, api_key):
         response = client.chat.completions.create(
             model="llama3-70b-8192",
             messages=[
-                {"role": "system", "content": "Convert these letters into meaningful English words or sentence."},
+                {"role": "system", "content": "Convert these letters into meaningful English sentence."},
                 {"role": "user", "content": text}
             ]
         )
@@ -99,18 +102,33 @@ def enhance_text(text, api_key):
         return response.choices[0].message.content.strip()
 
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {e}"
 
 # -------------------------------
-# 🎯 BUTTON ACTION
+# 🌐 MAIN UI FLOW
+# -------------------------------
+st.subheader("1️⃣ Vision: Hand Detection")
+
+webrtc_ctx = webrtc_streamer(
+    key="sign-detect",
+    video_processor_factory=VideoProcessor
+)
+
+# -------------------------------
+# 🧠 AI OUTPUT
 # -------------------------------
 if webrtc_ctx.video_processor:
-    if st.button("✨ Convert to Sentence"):
-        text = webrtc_ctx.video_processor.text
-        result = enhance_text(text, api_key)
 
-        st.write("### 📝 Detected Letters:")
-        st.write(text)
+    col1, col2 = st.columns(2)
 
-        st.write("### 🤖 AI Output:")
-        st.success(result)
+    with col1:
+        st.subheader("2️⃣ Detected Letters")
+        detected_text = webrtc_ctx.video_processor.text
+        st.write(detected_text)
+
+    with col2:
+        st.subheader("3️⃣ AI Output")
+
+        if st.button("✨ Convert to Sentence"):
+            result = process_text_with_ai(detected_text, api_key)
+            st.success(result)
