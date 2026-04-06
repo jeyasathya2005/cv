@@ -1,104 +1,71 @@
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 import streamlit as st
 import cv2
-import mediapipe as mp
 import numpy as np
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
-# -------------------------------
-# Page Setup
-# -------------------------------
-st.set_page_config(page_title="Sign Language Detection", layout="centered")
-
-st.title("🖐️ Real-Time Sign Language Detection")
-st.write("Using Computer Vision and Hand Tracking")
+st.title("🖐️ Sign Language Detection (Cloud Compatible)")
+st.write("Basic gesture detection without MediaPipe")
 
 # -------------------------------
-# Initialize MediaPipe SAFELY
+# Simple Gesture Detection (Contour Based)
 # -------------------------------
-@st.cache_resource
-def load_hands():
-    mp_hands = mp.solutions.hands
-    return mp_hands.Hands(
-        max_num_hands=1,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.7
-    )
+def detect_hand_gesture(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (35, 35), 0)
 
-hands = load_hands()
-mp_draw = mp.solutions.drawing_utils
-mp_hands = mp.solutions.hands
+    _, thresh = cv2.threshold(blur, 70, 255, cv2.THRESH_BINARY_INV)
 
-# -------------------------------
-# Finger Detection
-# -------------------------------
-def get_finger_states(hand_landmarks):
-    tips = [4, 8, 12, 16, 20]
-    states = []
+    contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    for i, tip in enumerate(tips):
-        if i == 0:
-            states.append(hand_landmarks.landmark[tip].x <
-                          hand_landmarks.landmark[tip - 1].x)
-        else:
-            states.append(hand_landmarks.landmark[tip].y <
-                          hand_landmarks.landmark[tip - 2].y)
+    if len(contours) == 0:
+        return frame, "No Hand"
 
-    return states
+    cnt = max(contours, key=cv2.contourArea)
 
-# -------------------------------
-# Gesture Recognition
-# -------------------------------
-def recognize_sign(fingers):
-    if fingers == [0, 0, 0, 0, 0]:
-        return "A"
-    elif fingers == [0, 1, 1, 1, 1]:
-        return "B"
-    elif fingers == [1, 1, 0, 0, 0]:
-        return "L"
-    elif fingers == [1, 1, 1, 0, 0]:
-        return "W"
+    hull = cv2.convexHull(cnt)
+
+    cv2.drawContours(frame, [cnt], -1, (0, 255, 0), 2)
+    cv2.drawContours(frame, [hull], -1, (0, 0, 255), 2)
+
+    # Simple heuristic
+    area = cv2.contourArea(cnt)
+
+    if area < 2000:
+        gesture = "Far Hand"
+    elif area < 5000:
+        gesture = "A"
+    elif area < 10000:
+        gesture = "B"
     else:
-        return "Unknown"
+        gesture = "Open Hand"
+
+    return frame, gesture
+
 
 # -------------------------------
-# Video Transformer
+# WebRTC Video Class
 # -------------------------------
-class SignDetector(VideoTransformerBase):
+class GestureDetector(VideoTransformerBase):
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        # Convert to RGB
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        processed, gesture = detect_hand_gesture(img)
 
-        # Process hand detection
-        results = hands.process(rgb)
+        cv2.putText(processed, f"Gesture: {gesture}",
+                    (20, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (255, 0, 0),
+                    2)
 
-        if results.multi_hand_landmarks:
-            for handLms in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(img, handLms, mp_hands.HAND_CONNECTIONS)
+        return processed
 
-                fingers = get_finger_states(handLms)
-                sign = recognize_sign(fingers)
-
-                cv2.putText(img, f"Sign: {sign}", (20, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            1, (0, 255, 0), 2)
-
-        return img
 
 # -------------------------------
-# Start Webcam (WebRTC)
+# Start Camera
 # -------------------------------
-st.subheader("📷 Live Camera Feed")
-
 webrtc_streamer(
-    key="sign-detection",
-    video_transformer_factory=SignDetector,
-    media_stream_constraints={
-        "video": True,
-        "audio": False
-    },
+    key="gesture-detection",
+    video_transformer_factory=GestureDetector,
+    media_stream_constraints={"video": True, "audio": False},
 )
