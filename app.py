@@ -1,34 +1,12 @@
 import streamlit as st
 import cv2
 import mediapipe as mp
-import numpy as np
 from groq import Groq
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 # -------------------------------
-# 🔐 GROQ API
+# 🖐️ MEDIAPIPE SETUP
 # -------------------------------
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-def enhance_text(text):
-    if text.strip() == "":
-        return ""
-    try:
-        response = client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=[
-                {"role": "system", "content": "Convert letters into meaningful sentence."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message.content.strip()
-    except:
-        return text
-
-# -------------------------------
-# 🖐️ MEDIAPIPE SETUP (FIXED)
-# -------------------------------
-import mediapipe as mp
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 
@@ -61,7 +39,6 @@ class VideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.hands = mp_hands.Hands(max_num_hands=1)
         self.text = ""
-        self.ai_text = ""
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -90,15 +67,50 @@ class VideoProcessor(VideoProcessorBase):
 # -------------------------------
 # 🌐 STREAMLIT UI
 # -------------------------------
-st.title("🖐️ Real-Time Sign Language Detection")
+st.title("🖐️ Sign Language Detection + AI")
 
+# 🔑 Manual API Key Input
+api_key = st.text_input("Enter your GROQ API Key:", type="password")
+
+# Start webcam
 webrtc_ctx = webrtc_streamer(
     key="sign-lang",
     video_processor_factory=VideoProcessor
 )
 
+# -------------------------------
+# 🤖 AI FUNCTION
+# -------------------------------
+def enhance_text(text, api_key):
+    if not api_key or text.strip() == "":
+        return "Enter API key and show gestures"
+
+    try:
+        client = Groq(api_key=api_key)
+
+        response = client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[
+                {"role": "system", "content": "Convert these letters into meaningful English words or sentence."},
+                {"role": "user", "content": text}
+            ]
+        )
+
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# -------------------------------
+# 🎯 BUTTON ACTION
+# -------------------------------
 if webrtc_ctx.video_processor:
     if st.button("✨ Convert to Sentence"):
         text = webrtc_ctx.video_processor.text
-        output = enhance_text(text)
-        st.success(output)
+        result = enhance_text(text, api_key)
+
+        st.write("### 📝 Detected Letters:")
+        st.write(text)
+
+        st.write("### 🤖 AI Output:")
+        st.success(result)
